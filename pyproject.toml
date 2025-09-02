@@ -7,7 +7,9 @@ authors = [
     { name = "Hiroaki Ogasawara", email = "13391129+xhiroga@users.noreply.github.com" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "markdownify>=0.13",
+]
 
 [project.scripts]
 ar5iv2md = "ar5iv2md:main"
