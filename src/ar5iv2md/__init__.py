@@ -139,6 +139,14 @@ def _mathml_to_tex(soup: BeautifulSoup) -> None:
         m.replace_with(NavigableString(rep))
 
 
+def _strip_footer(soup: BeautifulSoup) -> None:
+    # Remove semantic footer blocks by class/tag.
+    for el in list(
+        soup.select(".ar5iv-footer, footer.ltx_page_footer, .ltx_page_footer")
+    ):
+        el.decompose()
+
+
 def _add_md_bib_anchors(md_text: str, ids_in_order: list[str]) -> str:
     lines = md_text.splitlines()
     in_refs = False
@@ -196,6 +204,7 @@ def main() -> None:
         print(f"warn: output directory not empty, skip: {base_dir}", file=sys.stderr)
         return
     assets_dir = base_dir / "assets"
+    _strip_footer(soup)
     _rewrite_images(soup, base_url, assets_dir)
     _mathml_to_tex(soup)
 
