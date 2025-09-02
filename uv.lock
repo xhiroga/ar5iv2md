@@ -7,11 +7,15 @@ name = "ar5iv2md"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "beautifulsoup4" },
     { name = "markdownify" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "markdownify", specifier = ">=0.13" }]
+requires-dist = [
+    { name = "beautifulsoup4", specifier = ">=4.12" },
+    { name = "markdownify", specifier = ">=0.13" },
+]
 
 [[package]]
 name = "beautifulsoup4"

@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "markdownify>=0.13",
+    "beautifulsoup4>=4.12",
 ]
 
 [project.scripts]
