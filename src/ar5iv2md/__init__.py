@@ -143,8 +143,42 @@ def main() -> None:
         rep = f"\n$$\n{tex}\n$$\n" if (is_block or "\n" in tex) else f"${tex}$"
         m.replace_with(NavigableString(rep))
 
-    md_text = md(str(soup))
+    bib_ids = [el.get("id") for el in soup.find_all(id=re.compile(r"^bib\.bib\d+$")) if el.get("id")]
 
+    def _add_md_bib_anchors(md_text: str, ids_in_order: list[str]) -> str:
+        lines = md_text.splitlines()
+        in_refs = False
+        idx = 0
+        replacements: dict[int, str] = {}
+        for i, line in enumerate(lines):
+            if not in_refs:
+                if line.strip().lower() == "references":
+                    in_refs = True
+                continue
+            mnum = re.match(r"^[\*-] \[(\d{1,3})\]", line)
+            if mnum:
+                rid = f"bib.bib{mnum.group(1)}"
+                mlead = re.match(r"^([\*-]\s+)(.*)$", line)
+                if mlead:
+                    bullet, rest = mlead.group(1), mlead.group(2)
+                    replacements[i] = f"{bullet}<a id=\"{rid}\" name=\"{rid}\"></a>{rest}"
+            else:
+                if ids_in_order and re.match(r"^[\*-] ", line):
+                    if idx < len(ids_in_order):
+                        rid = ids_in_order[idx]
+                        idx += 1
+                        mlead = re.match(r"^([\*-]\s+)(.*)$", line)
+                        if mlead:
+                            bullet, rest = mlead.group(1), mlead.group(2)
+                            replacements[i] = f"{bullet}<a id=\"{rid}\" name=\"{rid}\"></a>{rest}"
+        for i, new_line in replacements.items():
+            lines[i] = new_line
+        return "\n".join(lines) + ("\n" if not md_text.endswith("\n") else "")
+
+    md_text = md(str(soup))
+    if bib_ids:
+        md_text = _add_md_bib_anchors(md_text, bib_ids)
+    
     out_path = base_dir / "README.md"
     base_dir.mkdir(parents=True, exist_ok=True)
     out_path.write_text(md_text, encoding="utf-8")
