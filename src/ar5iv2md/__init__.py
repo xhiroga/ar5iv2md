@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 from markdownify import markdownify as md
 
 
@@ -119,6 +119,29 @@ def main() -> None:
             continue
         (assets_dir / name).write_bytes(data)
         img["src"] = f"assets/{name}"
+
+    for m in soup.find_all("math"):
+        tex = None
+        for ann in m.find_all(["annotation", "annotation-xml"]):
+            enc = (ann.get("encoding") or "").lower()
+            if "tex" in enc:
+                tex = ann.get_text()
+                break
+        if tex is None:
+            tex = m.get("alttext") or m.get("data-tex")
+        if not tex:
+            continue
+        disp = (m.get("display") or "").lower()
+        is_block = disp == "block"
+        if not is_block:
+            p = m.parent
+            if p and isinstance(p, (BeautifulSoup,)) is False:
+                classes = " ".join(p.get("class", []))
+                if any(k in classes for k in ["ltx_display", "ltx_equation", "ltx_equationgroup"]):
+                    is_block = True
+        tex = tex.strip()
+        rep = f"\n$$\n{tex}\n$$\n" if (is_block or "\n" in tex) else f"${tex}$"
+        m.replace_with(NavigableString(rep))
 
     md_text = md(str(soup))
 
