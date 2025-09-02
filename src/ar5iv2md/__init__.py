@@ -13,7 +13,40 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 
 
+def _extract_arxiv_id(text: str) -> str | None:
+    t = text.strip()
+    if not t:
+        return None
+
+    if t.lower().startswith("arxiv:"):
+        t = t.split(":", 1)[1]
+
+    if t.startswith("http://") or t.startswith("https://"):
+        p = urlparse(t)
+        path = p.path or "/"
+        m = re.search(r"/(?:html|abs|pdf)/([^/?#]+)", path)
+        if m:
+            part = m.group(1)
+            if part.endswith(".pdf"):
+                part = part[:-4]
+            return part
+        return None
+
+    t = t.split("?", 1)[0].split("#", 1)[0]
+    if t.endswith(".pdf"):
+        t = t[:-4]
+
+    if re.fullmatch(r"\d{4}\.\d{4,5}(v\d+)?", t):
+        return t
+    if re.fullmatch(r"[a-zA-Z-]+(?:\.[a-zA-Z-]+)?/\d{7}(v\d+)?", t):
+        return t
+    return None
+
+
 def _to_ar5iv_url(source: str) -> str:
+    arxid = _extract_arxiv_id(source)
+    if arxid:
+        return f"https://ar5iv.org/html/{arxid}"
     if source.startswith("http://") or source.startswith("https://"):
         return source
     return f"https://ar5iv.org/html/{source}"
