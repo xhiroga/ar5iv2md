@@ -55,7 +55,8 @@ def _to_ar5iv_url(source: str) -> str:
 
 def _guess_basename(url: str) -> str:
     p = urlparse(url)
-    m = re.search(r"/html/([^/?#]+)", p.path)
+    # capture everything after /html/ up to ? or # (allowing '/')
+    m = re.search(r"/html/([^?#]+)", p.path)
     if m:
         return m.group(1).replace("/", "_")
     return Path(p.path).name or "ar5iv"
@@ -88,22 +89,26 @@ def _fetch(url: str) -> tuple[str, str]:
 
 def _rewrite_images(soup: BeautifulSoup, base_url: str, assets_dir: Path) -> None:
     assets_dir.mkdir(parents=True, exist_ok=True)
+    cache: dict[str, str] = {}
     for img in soup.find_all("img"):
         src = (img.get("src") or "").strip()
         if not src or src.startswith("data:"):
             continue
         abs_url = urljoin(base_url, src)
-        filename = os.path.basename(urlparse(abs_url).path)
-        if not filename:
-            filename = "image"
+        if abs_url in cache:
+            img["src"] = cache[abs_url]
+            continue
+        filename = os.path.basename(urlparse(abs_url).path) or "image"
         name = _unique_name(assets_dir, filename)
         try:
             data = _download(abs_url)
         except Exception as e:
             print(f"warn: failed to download image: {abs_url} ({e})", file=sys.stderr)
             continue
+        rel = f"assets/{name}"
         (assets_dir / name).write_bytes(data)
-        img["src"] = f"assets/{name}"
+        img["src"] = rel
+        cache[abs_url] = rel
 
 
 def _mathml_to_tex(soup: BeautifulSoup) -> None:
@@ -184,6 +189,12 @@ def main() -> None:
     soup = BeautifulSoup(html, "html.parser")
     basename = _guess_basename(url)
     base_dir = Path(args.download_dir) / basename
+    # skip if target directory already has contents
+    if base_dir.exists() and any(base_dir.iterdir()):
+        out_path = base_dir / "README.md"
+        print(str(out_path))
+        print(f"warn: output directory not empty, skip: {base_dir}", file=sys.stderr)
+        return
     assets_dir = base_dir / "assets"
     _rewrite_images(soup, base_url, assets_dir)
     _mathml_to_tex(soup)
