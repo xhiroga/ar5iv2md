@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import mimetypes
 import os
 import re
 import sys
@@ -11,6 +10,8 @@ from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup, NavigableString
 from markdownify import markdownify as md
+
+UA = "ar5iv2md/0.1"
 
 
 def _extract_arxiv_id(text: str) -> str | None:
@@ -73,36 +74,20 @@ def _unique_name(directory: Path, base: str) -> str:
 
 
 def _download(url: str) -> bytes:
-    req = Request(url, headers={"User-Agent": "ar5iv2md/0.1"})
+    req = Request(url, headers={"User-Agent": UA})
     with urlopen(req, timeout=30) as res:
         return res.read()
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(prog="ar5iv2md")
-    ap.add_argument("source")
-    ap.add_argument("--download-dir", default=".")
-    args = ap.parse_args()
+def _fetch(url: str) -> tuple[str, str]:
+    req = Request(url, headers={"User-Agent": UA})
+    with urlopen(req, timeout=30) as res:
+        charset = res.headers.get_content_charset() or "utf-8"
+        return res.read().decode(charset, errors="replace"), res.geturl()
 
-    url = _to_ar5iv_url(args.source)
 
-    try:
-        req = Request(url, headers={"User-Agent": "ar5iv2md/0.1"})
-        with urlopen(req, timeout=30) as res:
-            charset = res.headers.get_content_charset() or "utf-8"
-            html = res.read().decode(charset, errors="replace")
-            base_url = res.geturl()
-    except Exception as e:
-        print(f"failed to fetch: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    soup = BeautifulSoup(html, "html.parser")
-
-    basename = _guess_basename(url)
-    base_dir = Path(args.download_dir) / basename
-    assets_dir = base_dir / "assets"
+def _rewrite_images(soup: BeautifulSoup, base_url: str, assets_dir: Path) -> None:
     assets_dir.mkdir(parents=True, exist_ok=True)
-
     for img in soup.find_all("img"):
         src = (img.get("src") or "").strip()
         if not src or src.startswith("data:"):
@@ -120,6 +105,8 @@ def main() -> None:
         (assets_dir / name).write_bytes(data)
         img["src"] = f"assets/{name}"
 
+
+def _mathml_to_tex(soup: BeautifulSoup) -> None:
     for m in soup.find_all("math"):
         tex = None
         for ann in m.find_all(["annotation", "annotation-xml"]):
@@ -137,48 +124,80 @@ def main() -> None:
             p = m.parent
             if p and isinstance(p, (BeautifulSoup,)) is False:
                 classes = " ".join(p.get("class", []))
-                if any(k in classes for k in ["ltx_display", "ltx_equation", "ltx_equationgroup"]):
+                if any(
+                    k in classes
+                    for k in ["ltx_display", "ltx_equation", "ltx_equationgroup"]
+                ):
                     is_block = True
         tex = tex.strip()
         rep = f"\n$$\n{tex}\n$$\n" if (is_block or "\n" in tex) else f"${tex}$"
         m.replace_with(NavigableString(rep))
 
-    bib_ids = [el.get("id") for el in soup.find_all(id=re.compile(r"^bib\.bib\d+$")) if el.get("id")]
 
-    def _add_md_bib_anchors(md_text: str, ids_in_order: list[str]) -> str:
-        lines = md_text.splitlines()
-        in_refs = False
-        idx = 0
-        replacements: dict[int, str] = {}
-        for i, line in enumerate(lines):
-            if not in_refs:
-                if line.strip().lower() == "references":
-                    in_refs = True
-                continue
-            mnum = re.match(r"^[\*-] \[(\d{1,3})\]", line)
-            if mnum:
-                rid = f"bib.bib{mnum.group(1)}"
-                mlead = re.match(r"^([\*-]\s+)(.*)$", line)
-                if mlead:
-                    bullet, rest = mlead.group(1), mlead.group(2)
-                    replacements[i] = f"{bullet}<a id=\"{rid}\" name=\"{rid}\"></a>{rest}"
-            else:
-                if ids_in_order and re.match(r"^[\*-] ", line):
-                    if idx < len(ids_in_order):
-                        rid = ids_in_order[idx]
-                        idx += 1
-                        mlead = re.match(r"^([\*-]\s+)(.*)$", line)
-                        if mlead:
-                            bullet, rest = mlead.group(1), mlead.group(2)
-                            replacements[i] = f"{bullet}<a id=\"{rid}\" name=\"{rid}\"></a>{rest}"
-        for i, new_line in replacements.items():
-            lines[i] = new_line
-        return "\n".join(lines) + ("\n" if not md_text.endswith("\n") else "")
+def _add_md_bib_anchors(md_text: str, ids_in_order: list[str]) -> str:
+    lines = md_text.splitlines()
+    in_refs = False
+    idx = 0
+    replacements: dict[int, str] = {}
+    for i, line in enumerate(lines):
+        if not in_refs:
+            if line.strip().lower() == "references":
+                in_refs = True
+            continue
+        mnum = re.match(r"^[\*-] \[(\d{1,3})\]", line)
+        if mnum:
+            rid = f"bib.bib{mnum.group(1)}"
+            mlead = re.match(r"^([\*-]\s+)(.*)$", line)
+            if mlead:
+                bullet, rest = mlead.group(1), mlead.group(2)
+                replacements[i] = f'{bullet}<a id="{rid}" name="{rid}"></a>{rest}'
+        else:
+            if ids_in_order and re.match(r"^[\*-] ", line):
+                if idx < len(ids_in_order):
+                    rid = ids_in_order[idx]
+                    idx += 1
+                    mlead = re.match(r"^([\*-]\s+)(.*)$", line)
+                    if mlead:
+                        bullet, rest = mlead.group(1), mlead.group(2)
+                        replacements[i] = (
+                            f'{bullet}<a id="{rid}" name="{rid}"></a>{rest}'
+                        )
+    for i, new_line in replacements.items():
+        lines[i] = new_line
+    return "\n".join(lines) + ("\n" if not md_text.endswith("\n") else "")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(prog="ar5iv2md")
+    ap.add_argument("source")
+    ap.add_argument("--download-dir", default=".")
+    args = ap.parse_args()
+
+    url = _to_ar5iv_url(args.source)
+
+    try:
+        html, base_url = _fetch(url)
+    except Exception as e:
+        print(f"failed to fetch: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    soup = BeautifulSoup(html, "html.parser")
+    basename = _guess_basename(url)
+    base_dir = Path(args.download_dir) / basename
+    assets_dir = base_dir / "assets"
+    _rewrite_images(soup, base_url, assets_dir)
+    _mathml_to_tex(soup)
+
+    bib_ids = [
+        el.get("id")
+        for el in soup.find_all(id=re.compile(r"^bib\.bib\d+$"))
+        if el.get("id")
+    ]
 
     md_text = md(str(soup))
     if bib_ids:
         md_text = _add_md_bib_anchors(md_text, bib_ids)
-    
+
     out_path = base_dir / "README.md"
     base_dir.mkdir(parents=True, exist_ok=True)
     out_path.write_text(md_text, encoding="utf-8")
